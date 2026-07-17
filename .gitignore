@@ -1,0 +1,11 @@
+.idea/
+node_modules/
+.vscode/
+.gradle/
+.gradle-home/
+.tmp/
+uploads/
+
+# 배포 시크릿 / 로컬 도구
+.env
+.claude/

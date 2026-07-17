@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.doumi.donation.payment.model.dao.PaymentDao">
+
+    <insert id="insertPayment">
+        INSERT INTO payment (member_id, payment_key, order_id, amount, status)
+        VALUES (#{memberId}, #{paymentKey}, #{orderId}, #{amount}, 'CHARGED')
+    </insert>
+
+    <!-- 멱등성 사전 체크: 이미 승인 처리된 결제인지 확인 -->
+    <select id="existsByPaymentKey" resultType="boolean">
+        SELECT COUNT(*) > 0 FROM payment WHERE payment_key = #{paymentKey}
+    </select>
+
+    <select id="findByMemberId" resultType="com.doumi.donation.payment.model.dto.Payment">
+        SELECT payment_id, member_id, payment_key, order_id, amount, status, created_at, canceled_at
+        FROM payment
+        WHERE member_id = #{memberId}
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findById" resultType="com.doumi.donation.payment.model.dto.Payment">
+        SELECT payment_id, member_id, payment_key, order_id, amount, status, created_at, canceled_at
+        FROM payment
+        WHERE payment_id = #{paymentId}
+    </select>
+
+    <!-- CHARGED 건만 취소 처리 (이미 CANCELED면 0건 갱신 → 멱등) -->
+    <update id="cancelPayment">
+        UPDATE payment
+        SET status = 'CANCELED', canceled_at = NOW()
+        WHERE payment_id = #{paymentId} AND status = 'CHARGED'
+    </update>
+
+</mapper>

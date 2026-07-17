@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.doumi.donation.board.model.dao.BoardDao">
+
+    <select id="countBoards" resultType="long">
+        SELECT COUNT(*) FROM BOARD
+        <where>
+            <if test="category != null and category != ''">
+                category = #{category}
+            </if>
+        </where>
+    </select>
+
+    <select id="selectBoardList" resultType="com.doumi.donation.board.model.dto.Board">
+        SELECT
+        b.board_id AS boardId,
+        b.category,
+        b.title,
+        b.views,
+        b.likes,
+        b.is_pinned AS isPinned,
+        b.created_at AS createdAt,
+        m.name AS authorName,
+        (SELECT COUNT(*) FROM BOARD_COMMENT WHERE board_id = b.board_id) AS commentsCount
+        FROM BOARD b
+        JOIN MEMBER m ON b.author_id = m.member_id
+        <where>
+            <if test="category != null and category != ''">
+                b.category = #{category}
+            </if>
+        </where>
+        ORDER BY b.is_pinned DESC, b.created_at DESC, b.board_id DESC
+        LIMIT #{offset}, #{size}
+    </select>
+
+    <update id="updateView">
+        UPDATE board SET views = views + 1 WHERE board_id = #{id}
+
+    </update>
+
+    <select id="getBoardDetail" resultType="com.doumi.donation.board.model.dto.Board">
+        SELECT
+            b.board_id AS boardId,
+            b.campaign_id AS campaignId,
+            b.author_id AS authorId,
+            b.title,
+            b.content,
+            b.category,
+            b.views,
+            b.likes,
+            b.is_pinned AS isPinned,
+            b.created_at AS createdAt,
+            m.name AS authorName
+        FROM BOARD b
+                 JOIN MEMBER m ON b.author_id = m.member_id
+        WHERE b.board_id = #{id}
+
+    </select>
+
+    <insert id="registBoard" parameterType="com.doumi.donation.board.model.dto.Board" useGeneratedKeys="true" keyProperty="boardId">
+        INSERT INTO BOARD (campaign_id, author_id, title, content, category, is_pinned)
+        VALUES (
+                   #{campaignId},
+                   #{authorId},
+                   #{title},
+                   #{content},
+                   #{category},
+                   #{isPinned}
+               )
+    </insert>
+
+    <update id="updateBoard" parameterType="com.doumi.donation.board.model.dto.Board">
+        UPDATE BOARD
+        SET
+            title = #{title},
+            content = #{content},
+            category = #{category},
+            campaign_id = #{campaignId}
+        WHERE board_id = #{boardId}
+
+    </update>
+
+    <delete id="deleteBoard">
+        DELETE FROM BOARD WHERE board_id = #{id}
+    </delete>
+
+    <!-- 좋아요 관련 쿼리 추가 -->
+    <select id="checkLikeExists" resultType="int">
+        SELECT COUNT(*)
+        FROM BOARD_LIKE
+        WHERE board_id = #{boardId} AND member_id = #{memberId}
+    </select>
+
+    <insert id="insertLike">
+        INSERT INTO BOARD_LIKE (board_id, member_id)
+        VALUES (#{boardId}, #{memberId})
+    </insert>
+
+    <delete id="deleteLike">
+        DELETE FROM BOARD_LIKE
+        WHERE board_id = #{boardId} AND member_id = #{memberId}
+    </delete>
+
+    <update id="updateLikesCount">
+        UPDATE BOARD
+        SET likes = likes + #{amount}
+        WHERE board_id = #{boardId}
+    </update>
+
+    <update id="createBoardLikeTableIfNotExists">
+        CREATE TABLE IF NOT EXISTS BOARD_LIKE (
+            like_id    BIGINT   NOT NULL AUTO_INCREMENT,
+            board_id   BIGINT   NOT NULL,
+            member_id  BIGINT   NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (like_id),
+            UNIQUE KEY uq_board_member_like (board_id, member_id),
+            CONSTRAINT fk_like_board FOREIGN KEY (board_id) REFERENCES BOARD (board_id) ON DELETE CASCADE,
+            CONSTRAINT fk_like_member FOREIGN KEY (member_id) REFERENCES MEMBER (member_id) ON DELETE CASCADE
+        )
+    </update>
+</mapper>

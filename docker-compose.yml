@@ -1,0 +1,49 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PW}
+      MYSQL_DATABASE: donation
+      MYSQL_USER: donation
+      MYSQL_PASSWORD: ${DB_PW}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--lower-case-table-names=1", "--innodb-buffer-pool-size=128M", "--performance-schema=OFF"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    restart: always
+
+  redis:
+    image: redis/redis-stack-server:latest   # ⚠ 벡터 검색용 (일반 redis 아님)
+    volumes:
+      - redis-data:/data
+    restart: always
+
+  backend:
+    build: ./backend
+    depends_on: [mysql, redis]
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      JAVA_TOOL_OPTIONS: "-Xmx512m -XX:MaxMetaspaceSize=192m"   # 자바 메모리 제한 (OOM 방지)
+      DB_PW: ${DB_PW}
+      PUBLIC_API_KEY: ${PUBLIC_API_KEY}
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      LLM_API_KEY: ${LLM_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      KAKAO_REST_KEY: ${KAKAO_REST_KEY}
+      MAIL_USERNAME: ${MAIL_USERNAME}        # 메일 발송 계정 (Gmail 주소)
+      MAIL_PASSWORD: ${MAIL_PASSWORD}        # Gmail 앱 비밀번호 16자리
+    volumes:
+      - uploads:/data/uploads          # 업로드 이미지 영속화
+    expose: ["8080"]
+    restart: always
+
+  nginx:
+    build: ./frontend
+    depends_on: [backend]
+    ports: ["80:80"]
+    restart: always
+
+volumes:
+  mysql-data:
+  redis-data:
+  uploads:

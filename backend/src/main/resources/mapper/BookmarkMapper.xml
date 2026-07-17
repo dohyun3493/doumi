@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.doumi.donation.bookmark.model.dao.BookmarkDao">
+
+    <insert id="insertBookmark">
+        INSERT IGNORE INTO bookmark (member_id, campaign_id)
+        VALUES (#{memberId}, #{campaignId})
+    </insert>
+
+    <delete id="deleteBookmark">
+        DELETE FROM bookmark
+        WHERE member_id = #{memberId} AND campaign_id = #{campaignId}
+    </delete>
+
+    <select id="findBookmarkedCampaigns" resultType="com.doumi.donation.campaigns.model.dto.Campaign">
+        SELECT c.*
+        FROM bookmark b
+        JOIN campaign c ON c.campaign_id = b.campaign_id
+        WHERE b.member_id = #{memberId}
+        ORDER BY b.created_at DESC
+    </select>
+
+    <select id="existsCampaign" resultType="boolean">
+        SELECT COUNT(*) > 0 FROM campaign WHERE campaign_id = #{campaignId}
+    </select>
+
+</mapper>

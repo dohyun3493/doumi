@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.doumi.donation.report.model.dao.ReportDao">
+
+    <insert id="insertReport" useGeneratedKeys="true" keyProperty="reportId">
+        INSERT INTO campaign_report (campaign_id, content)
+        VALUES (#{campaignId}, #{content})
+    </insert>
+
+    <insert id="insertExpense">
+        INSERT INTO report_expense (report_id, item, amount)
+        VALUES (#{reportId}, #{item}, #{amount})
+    </insert>
+
+    <insert id="insertImage">
+        INSERT INTO report_image (report_id, image_url, image_type)
+        VALUES (#{reportId}, #{imageUrl}, #{imageType})
+    </insert>
+
+    <select id="findReportByCampaignId" resultType="com.doumi.donation.report.model.dto.CampaignReport">
+        SELECT report_id, campaign_id, content, created_at
+        FROM campaign_report
+        WHERE campaign_id = #{campaignId}
+    </select>
+
+    <select id="findExpensesByReportId" resultType="com.doumi.donation.report.model.dto.ReportExpense">
+        SELECT expense_id, report_id, item, amount
+        FROM report_expense
+        WHERE report_id = #{reportId}
+        ORDER BY expense_id
+    </select>
+
+    <select id="findImagesByReportId" resultType="com.doumi.donation.report.model.dto.ReportImage">
+        SELECT image_id, report_id, image_url, image_type
+        FROM report_image
+        WHERE report_id = #{reportId}
+        ORDER BY image_id
+    </select>
+
+    <select id="existsByCampaignId" resultType="boolean">
+        SELECT COUNT(*) > 0 FROM campaign_report WHERE campaign_id = #{campaignId}
+    </select>
+
+    <update id="updateReportContent">
+        UPDATE campaign_report SET content = #{content} WHERE report_id = #{reportId}
+    </update>
+
+    <delete id="deleteExpensesByReportId">
+        DELETE FROM report_expense WHERE report_id = #{reportId}
+    </delete>
+
+    <delete id="deleteImagesByReportId">
+        DELETE FROM report_image WHERE report_id = #{reportId}
+    </delete>
+
+</mapper>

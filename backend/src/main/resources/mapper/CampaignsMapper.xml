@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.doumi.donation.campaigns.model.dao.CampaignsDao">
+    
+    <select id="getAllCampaigns" resultType="com.doumi.donation.campaigns.model.dto.Campaign">
+        SELECT * FROM campaign
+        <where>
+            AND delete_requested = FALSE
+            <if test="category != null and category != '' and category != 'all'">
+                AND category LIKE CONCAT('%', #{category}, '%')
+            </if>
+            <if test="region != null and region != '' and region != 'all'">
+                AND region LIKE CONCAT('%', #{region}, '%')
+            </if>
+            <if test="status != null and status != '' and status != 'all'">
+                AND status = #{status}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (
+                    title LIKE CONCAT('%', #{keyword}, '%')
+                    OR description LIKE CONCAT('%', #{keyword}, '%')
+                    OR org_name LIKE CONCAT('%', #{keyword}, '%')
+                )
+            </if>
+        </where>
+    </select>
+
+    <select id="getDetailCampaign" resultType="com.doumi.donation.campaigns.model.dto.Campaign">
+        SELECT * FROM campaign
+        WHERE campaign_id=#{id}
+    </select>
+
+    <select id="getCampaignsByIds" resultType="com.doumi.donation.campaigns.model.dto.Campaign">
+        SELECT * FROM campaign
+        WHERE campaign_id IN
+        <foreach item="id" collection="ids" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <!-- 단체가 등록한 캠페인 (최신순) -->
+    <select id="getCampaignsByOwner" resultType="com.doumi.donation.campaigns.model.dto.Campaign">
+        SELECT * FROM campaign
+        WHERE owner_id = #{ownerId}
+        ORDER BY campaign_id DESC
+    </select>
+
+
+    <!-- useGeneratedKeys: 등록 직후 생성된 campaignId를 DTO에 채워줌 (벡터 DB 단건 색인에 필요) -->
+    <insert id="registCampaign" useGeneratedKeys="true" keyProperty="campaignId">
+        INSERT INTO campaign (api_reg_no, org_name, title, description, purpose, goal_amount,
+                              current_amount, region, category, start_date, end_date, status,
+                              homepage_url, zip_code, address, tel_no, applied_at, owner_id, thumbnail_url)
+        VALUES (CONCAT('사설-', REPLACE(UUID(), '-', '')), #{orgName}, #{title}, #{description}, #{purpose}, #{goalAmount},
+                0, #{region}, #{category}, #{startDate}, #{endDate},
+                IFNULL(#{status}, '모집예정'),
+                #{homepageUrl}, #{zipCode}, #{address}, #{telNo}, #{appliedAt}, #{ownerId}, #{thumbnailUrl})
+    </insert>
+
+    <update id="updateCampaign">
+        UPDATE campaign
+        <set>
+            <if test="req.orgName != null">org_name = #{req.orgName},</if>
+            <if test="req.title != null">title = #{req.title},</if>
+            <if test="req.description != null">description = #{req.description},</if>
+            <if test="req.purpose != null">purpose = #{req.purpose},</if>
+            <if test="req.goalAmount != null">goal_amount = #{req.goalAmount},</if>
+            <if test="req.region != null">region = #{req.region},</if>
+            <if test="req.category != null">category = #{req.category},</if>
+            <if test="req.startDate != null">start_date = #{req.startDate},</if>
+            <if test="req.endDate != null">end_date = #{req.endDate},</if>
+            <if test="req.status != null">status = #{req.status},</if>
+            <if test="req.homepageUrl != null">homepage_url = #{req.homepageUrl},</if>
+            <if test="req.zipCode != null">zip_code = #{req.zipCode},</if>
+            <if test="req.address != null">address = #{req.address},</if>
+            <if test="req.telNo != null">tel_no = #{req.telNo},</if>
+            <if test="req.appliedAt != null">applied_at = #{req.appliedAt},</if>
+            <if test="req.thumbnailUrl != null">thumbnail_url = #{req.thumbnailUrl},</if>
+        </set>
+        WHERE campaign_id = #{campaignId}
+    </update>
+
+    <delete id="deleteCampaign">
+        DELETE FROM campaign
+        WHERE campaign_id = #{campaignId}
+    </delete>
+
+    <!-- ===== 단체 탈퇴 정리 ===== -->
+    <!-- '사용완료'가 아닌 소유 캠페인의 기부를 기부자·캠페인별로 합산 (환불 대상) -->
+    <select id="sumRefundableDonationsByOwner" resultType="com.doumi.donation.campaigns.model.dto.DonorRefundDto">
+        SELECT d.member_id   AS memberId,
+               c.campaign_id AS campaignId,
+               c.title       AS campaignTitle,
+               SUM(d.amount) AS amount
+        FROM donation d
+        JOIN campaign c ON c.campaign_id = d.campaign_id
+        WHERE c.owner_id = #{ownerId}
+          AND c.status &lt;&gt; '사용완료'
+        GROUP BY d.member_id, c.campaign_id, c.title
+    </select>
+
+    <delete id="deleteDonationsByOwner">
+        DELETE FROM donation
+        WHERE campaign_id IN (SELECT campaign_id FROM campaign WHERE owner_id = #{ownerId})
+    </delete>
+
+    <delete id="deleteCampaignsByOwner">
+        DELETE FROM campaign
+        WHERE owner_id = #{ownerId}
+    </delete>
+
+    <select id="getDonationsByCampaignId" resultType="com.doumi.donation.campaigns.model.dto.DonationDto">
+        SELECT
+            d.donation_id,
+            CASE
+                WHEN LENGTH(m.name) = 1 THEN m.name
+                WHEN LENGTH(m.name) = 2 THEN CONCAT(LEFT(m.name, 1), '*')
+                ELSE CONCAT(LEFT(m.name, 1), REPEAT('*', LENGTH(m.name) - 2), RIGHT(m.name, 1))
+            END AS masked_name,
+            d.amount,
+            d.donated_at
+        FROM donation d
+        JOIN member m ON d.member_id = m.member_id
+        WHERE d.campaign_id = #{campaignId}
+        ORDER BY d.donated_at DESC
+    </select>
+
+    <!-- 마감일(end_date)이 오늘보다 이전인 '모집중' 캠페인 (자동 마감 대상) -->
+    <select id="findExpiredOpenCampaignIds" resultType="long">
+        SELECT campaign_id
+        FROM campaign
+        WHERE status = '모집중' AND end_date &lt; CURDATE()
+    </select>
+
+    <update id="closeExpiredCampaigns">
+        UPDATE campaign
+        SET status = '모집완료'
+        WHERE status = '모집중' AND end_date &lt; CURDATE()
+    </update>
+
+    <!-- 시작일(start_date)이 오늘 이하인 '모집예정' 캠페인을 '모집중'으로 전환 -->
+    <update id="openScheduledCampaigns">
+        UPDATE campaign
+        SET status = '모집중'
+        WHERE status = '모집예정' AND start_date &lt;= CURDATE()
+    </update>
+
+    <!-- 삭제 요청 설정/해제 -->
+    <update id="updateDeleteRequest">
+        UPDATE campaign
+        SET delete_requested = #{requested},
+            delete_request_reason = #{reason}
+        WHERE campaign_id = #{campaignId}
+    </update>
+
+    <select id="findDeleteRequested" resultType="com.doumi.donation.campaigns.model.dto.Campaign">
+        SELECT * FROM campaign
+        WHERE delete_requested = TRUE
+        ORDER BY campaign_id DESC
+    </select>
+
+    <select id="countDonationsByCampaignId" resultType="int">
+        SELECT COUNT(*) FROM donation WHERE campaign_id = #{campaignId}
+    </select>
+
+</mapper>

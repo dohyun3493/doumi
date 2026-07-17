@@ -1,0 +1,8 @@
+{
+  "name": "donation-root",
+  "private": true,
+  "scripts": {
+    "dev": "cd frontend && pnpm dev",
+    "install": "cd frontend && pnpm install"
+  }
+}

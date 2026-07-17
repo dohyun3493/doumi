@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.doumi.donation.notification.model.dao.NotificationDao">
+
+    <select id="findByMemberId" resultType="com.doumi.donation.notification.model.dto.Notification">
+        SELECT notification_id, member_id, type, content, link_url,
+               is_read AS `read`, created_at
+        FROM notification
+        WHERE member_id = #{memberId}
+        ORDER BY created_at DESC, notification_id DESC
+        LIMIT 30
+    </select>
+
+    <!-- member_id 조건으로 본인 알림만 읽음 처리 가능 -->
+    <update id="markRead">
+        UPDATE notification
+        SET is_read = TRUE
+        WHERE notification_id = #{notificationId} AND member_id = #{memberId}
+    </update>
+
+    <update id="markAllRead">
+        UPDATE notification
+        SET is_read = TRUE
+        WHERE member_id = #{memberId} AND is_read = FALSE
+    </update>
+
+    <!-- member_id 조건으로 본인 알림만 삭제 가능 -->
+    <delete id="deleteNotification">
+        DELETE FROM notification
+        WHERE notification_id = #{notificationId} AND member_id = #{memberId}
+    </delete>
+
+    <!-- 모집 중이면서 마감이 정확히 3일 남은 캠페인 → 찜한 회원 전원에게 알림 -->
+    <insert id="insertDeadlineNotifications">
+        INSERT INTO notification (member_id, type, content, link_url)
+        SELECT b.member_id,
+               'DEADLINE',
+               CONCAT('찜한 캠페인 "', c.title, '" 마감이 3일 남았어요!'),
+               CONCAT('/campaigns/', c.campaign_id)
+        FROM bookmark b
+        JOIN campaign c ON c.campaign_id = b.campaign_id
+        WHERE c.end_date = DATE_ADD(CURDATE(), INTERVAL 3 DAY)
+          AND c.status = '모집중'
+    </insert>
+
+    <insert id="insertGoalAchievedNotifications">
+        INSERT INTO notification (member_id, type, content, link_url)
+        SELECT b.member_id,
+               'GOAL_ACHIEVED',
+               CONCAT('찜한 캠페인 "', c.title, '"이(가) 목표 금액을 달성했어요!'),
+               CONCAT('/campaigns/', c.campaign_id)
+        FROM bookmark b
+        JOIN campaign c ON c.campaign_id = b.campaign_id
+        WHERE b.campaign_id = #{campaignId}
+    </insert>
+
+    <insert id="insertNotification">
+        INSERT INTO notification (member_id, type, content, link_url)
+        VALUES (#{memberId}, #{type}, #{content}, #{linkUrl})
+    </insert>
+
+    <!-- 해당 캠페인에 기부한 회원 전원(중복 제거)에게 사용 보고 등록 알림 -->
+    <insert id="insertReportNotifications">
+        INSERT INTO notification (member_id, type, content, link_url)
+        SELECT DISTINCT d.member_id,
+               'REPORT_PUBLISHED',
+               CONCAT('기부하신 캠페인 "', c.title, '"의 기부금 사용 보고가 등록되었어요!'),
+               CONCAT('/campaigns/', c.campaign_id)
+        FROM donation d
+        JOIN campaign c ON c.campaign_id = d.campaign_id
+        WHERE d.campaign_id = #{campaignId}
+    </insert>
+
+</mapper>

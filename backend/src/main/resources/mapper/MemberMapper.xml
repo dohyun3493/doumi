@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.doumi.donation.member.model.dao.MemberDao">
+
+    <select id="existsByEmail" resultType="boolean">
+        SELECT COUNT(*) > 0 FROM member WHERE email = #{email}
+    </select>
+
+    <insert id="insertMember">
+        INSERT INTO member (email, password, name, member_type, org_reg_no, org_status, created_at)
+        VALUES (#{email}, #{password}, #{name}, #{memberType}, #{orgRegNo}, #{orgStatus}, NOW())
+    </insert>
+
+    <select id="findOrganizationsByStatus" resultType="com.doumi.donation.member.model.dto.Member">
+        SELECT member_id, email, name, member_type, org_reg_no, org_status, reject_reason, created_at
+        FROM member
+        WHERE member_type = 'ORGANIZATION'
+        <if test="status != null and status != '' and status != 'all'">
+            AND org_status = #{status}
+        </if>
+        ORDER BY created_at DESC
+    </select>
+
+    <update id="updateOrgStatus">
+        UPDATE member
+        SET org_status = #{status}, reject_reason = #{rejectReason}
+        WHERE member_id = #{memberId} AND member_type = 'ORGANIZATION'
+    </update>
+
+    <!-- 관리자 회원 목록 필터 (조회·카운트 공용) -->
+    <sql id="memberFilter">
+        <where>
+            <if test="type != null and type != '' and type != 'all'">
+                AND member_type = #{type}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (email LIKE CONCAT('%', #{keyword}, '%') OR name LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+        </where>
+    </sql>
+
+    <select id="countMembers" resultType="long">
+        SELECT COUNT(*) FROM member
+        <include refid="memberFilter"/>
+    </select>
+
+    <!-- 관리자: 전체 회원 조회 (유형/검색어 필터 + 페이징). 비밀번호는 제외하고 조회 -->
+    <select id="findAllMembers" resultType="com.doumi.donation.member.model.dto.Member">
+        SELECT member_id, email, name, member_type, point_balance,
+               org_status, created_at, deleted_at
+        FROM member
+        <include refid="memberFilter"/>
+        ORDER BY member_id DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <!-- 회원 탈퇴: 행을 지우지 않고(기부/결제/포인트/랭킹 FK·기록 보존) 개인정보만 비우는 soft delete.
+         email은 UNIQUE라 익명화하면 (1) 같은 이메일 재가입 가능 (2) 옛 이메일로 로그인 불가 가 동시에 해결됨 -->
+    <update id="deleteByEmail">
+        UPDATE member
+        SET deleted_at = NOW(),
+            email      = CONCAT('deleted_', member_id, '@deleted.local'),
+            name       = '탈퇴한 회원',
+            password   = '',
+            refresh    = NULL
+        WHERE email = #{email} AND deleted_at IS NULL
+    </update>
+
+    <select id="findByEmail" resultType="com.doumi.donation.member.model.dto.Member">
+        SELECT * FROM member WHERE email = #{email}
+    </select>
+
+    <select id="findByMemberId" resultType="com.doumi.donation.member.model.dto.Member">
+        SELECT * FROM member WHERE member_id = #{memberId}
+    </select>
+
+    <update id="updateMember">
+        UPDATE member
+        <set>
+            <if test="req.email != null and req.email != ''">
+                email = #{req.email},
+            </if>
+            <if test="req.password != null and req.password != ''">
+                password = #{req.password},
+            </if>
+            <if test="req.name != null and req.name != ''">
+                name = #{req.name},
+            </if>
+            <!-- 빈 문자열이면 사진 제거를 의미하므로 null 체크만 한다 -->
+            <if test="req.profileImageUrl != null">
+                profile_image_url = #{req.profileImageUrl},
+            </if>
+        </set>
+        WHERE email = #{email}
+    </update>
+
+
+    <!-- 비밀번호 재설정 전용 (탈퇴 회원 제외). 인증코드 검증은 서비스 계층에서 끝낸 뒤 호출된다 -->
+    <update id="updatePassword">
+        UPDATE member
+        SET password = #{password}
+        WHERE email = #{email} AND deleted_at IS NULL
+    </update>
+
+    <update id="updatePointBalance">
+        UPDATE member SET point_balance = point_balance + #{delta} WHERE email = #{email}
+    </update>
+
+    <update id="updatePointBalanceById">
+        UPDATE member SET point_balance = point_balance + #{delta} WHERE member_id = #{memberId}
+    </update>
+
+    <!-- 잔액 확인과 차감을 원자적으로 처리 (동시 요청 시 마이너스 잔액 방지) -->
+    <update id="decreasePointIfEnough">
+        UPDATE member
+        SET point_balance = point_balance - #{amount}
+        WHERE member_id = #{memberId} AND point_balance >= #{amount}
+    </update>
+
+    <select id="findDonationsByEmail" resultType="com.doumi.donation.member.model.dto.MyDonationDto">
+        SELECT
+            d.donation_id,
+            c.title AS campaign_title,
+            c.campaign_id,
+            d.amount,
+            d.donated_at
+        FROM donation d
+        JOIN member m ON d.member_id = m.member_id
+        JOIN campaign c ON d.campaign_id = c.campaign_id
+        WHERE m.email = #{email}
+        ORDER BY d.donated_at DESC
+    </select>
+
+    <select id="findDonationsByMemberId" resultType="com.doumi.donation.member.model.dto.MyDonationDto">
+        SELECT
+            d.donation_id,
+            c.title AS campaign_title,
+            c.campaign_id,
+            d.amount,
+            d.donated_at
+        FROM donation d
+        JOIN campaign c ON d.campaign_id = c.campaign_id
+        WHERE d.member_id = #{memberId}
+        ORDER BY d.donated_at DESC
+    </select>
+
+    <update id="updateRefreshToken">
+        UPDATE member
+        SET refresh = #{refresh}
+        WHERE email = #{email}
+    </update>
+
+</mapper>

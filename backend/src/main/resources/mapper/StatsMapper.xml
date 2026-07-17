@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.doumi.donation.stats.model.dao.StatsDao">
+
+    <!-- 총 누적 기부금 -->
+    <select id="getTotalDonationAmount" resultType="long">
+        SELECT IFNULL(SUM(amount), 0) FROM donation
+    </select>
+
+    <!-- 진행 중인 캠페인 수 (완료된 것 제외) -->
+    <select id="getActiveCampaignCount" resultType="long">
+        SELECT COUNT(*) FROM campaign WHERE status NOT IN ('모집완료', '사용완료')
+    </select>
+
+    <!-- 가입 회원 수 -->
+    <select id="getTotalMemberCount" resultType="long">
+        SELECT COUNT(*) FROM member
+    </select>
+
+    <!-- 이번 달 기부자 수 (중복 제거) -->
+    <select id="getMonthlyDonorCount" resultType="long">
+        SELECT COUNT(DISTINCT member_id)
+        FROM donation
+        WHERE YEAR(donated_at) = YEAR(NOW())
+          AND MONTH(donated_at) = MONTH(NOW())
+    </select>
+
+    <!-- 완료된 캠페인 수 -->
+    <select id="getCompletedCampaignCount" resultType="long">
+        SELECT COUNT(*) FROM campaign WHERE status IN ('모집완료', '사용완료')
+    </select>
+
+    <!-- 개인 회원 수 -->
+    <select id="getIndividualMemberCount" resultType="long">
+        SELECT COUNT(*) FROM member WHERE member_type = 'INDIVIDUAL'
+    </select>
+
+    <!-- 단체 회원 수 -->
+    <select id="getOrganizationMemberCount" resultType="long">
+        SELECT COUNT(*) FROM member WHERE member_type = 'ORGANIZATION'
+    </select>
+
+    <!-- 승인 대기 단체 수 -->
+    <select id="getPendingOrganizationCount" resultType="long">
+        SELECT COUNT(*) FROM member WHERE member_type = 'ORGANIZATION' AND org_status = 'PENDING'
+    </select>
+
+    <!-- 최근 6개월 월별 기부 합계 (기부가 있는 달만) -->
+    <select id="getMonthlyDonations" resultType="com.doumi.donation.stats.model.dto.MonthlyDonationDto">
+        SELECT DATE_FORMAT(donated_at, '%Y-%m') AS month,
+               IFNULL(SUM(amount), 0)           AS amount
+        FROM donation
+        WHERE donated_at >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
+        GROUP BY month
+        ORDER BY month
+    </select>
+
+    <!-- 카테고리별 캠페인 수 -->
+    <select id="getCategoryCounts" resultType="com.doumi.donation.stats.model.dto.LabelCountDto">
+        SELECT IFNULL(NULLIF(category, ''), '기타') AS label, COUNT(*) AS count
+        FROM campaign
+        GROUP BY label
+        ORDER BY count DESC
+    </select>
+
+    <!-- 지역별 캠페인 수 -->
+    <select id="getRegionCounts" resultType="com.doumi.donation.stats.model.dto.LabelCountDto">
+        SELECT IFNULL(NULLIF(region, ''), '기타') AS label, COUNT(*) AS count
+        FROM campaign
+        GROUP BY label
+        ORDER BY count DESC
+    </select>
+
+</mapper>

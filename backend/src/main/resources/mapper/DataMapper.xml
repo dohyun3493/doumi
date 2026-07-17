@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.doumi.donation.publicdata.model.dao.PublicDataDao">
+
+    <!-- 전체 리로드용 초기화 (FK 순서상 donation 먼저, 그 다음 campaign) -->
+    <delete id="deleteAllDonations">
+        DELETE FROM donation
+    </delete>
+
+    <delete id="deleteAllCampaigns">
+        DELETE FROM campaign
+    </delete>
+
+    <!-- 벌크 Upsert: foreach로 한 번의 SQL에 여러 건 INSERT -->
+    <insert id="upsertCampaignBatch" parameterType="java.util.List">
+        INSERT INTO campaign (
+            api_reg_no, title, description, purpose,
+            start_date, end_date, homepage_url, org_name, category,
+            zip_code, address, tel_no, region, goal_amount, status, applied_at
+        ) VALUES
+        <foreach collection="list" item="dto" separator=",">
+            (
+                #{dto.cntrProgrmRegistNo}, #{dto.reprsntSj}, #{dto.rcritSj}, #{dto.rcritPurps},
+                #{dto.rcritBgnde}, #{dto.rcritEndde}, #{dto.hmpgAdres}, #{dto.rcritrNm}, #{dto.cntrClUpNm},
+                #{dto.zip}, #{dto.adres}, #{dto.dmstcTelno}, #{dto.rcritArea}, #{dto.rcritGoalAm},
+                <!-- 진행상태 정규화: 알려진 4상태면 그대로, 그 외(기타 등)는 날짜로 판정 -->
+                CASE
+                    WHEN #{dto.step} IN ('모집중','모집예정','모집완료','사용완료') THEN #{dto.step}
+                    WHEN CAST(#{dto.rcritBgnde} AS DATE) &gt; CURDATE() THEN '모집예정'
+                    WHEN CAST(#{dto.rcritEndde} AS DATE) &lt; CURDATE() THEN '모집완료'
+                    ELSE '모집중'
+                END,
+                #{dto.saveDt}
+            )
+        </foreach>
+        ON DUPLICATE KEY UPDATE
+            title        = VALUES(title),
+            description  = VALUES(description),
+            purpose      = VALUES(purpose),
+            start_date   = VALUES(start_date),
+            end_date     = VALUES(end_date),
+            homepage_url = VALUES(homepage_url),
+            org_name     = VALUES(org_name),
+            category     = VALUES(category),
+            zip_code     = VALUES(zip_code),
+            address      = VALUES(address),
+            tel_no       = VALUES(tel_no),
+            region       = VALUES(region),
+            goal_amount  = VALUES(goal_amount),
+            status       = VALUES(status),
+            applied_at   = VALUES(applied_at)
+    </insert>
+
+</mapper>

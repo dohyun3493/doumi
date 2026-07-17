@@ -1,0 +1,4 @@
+build
+.gradle
+.git
+src/main/resources/application.properties

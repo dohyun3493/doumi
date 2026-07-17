@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.doumi.donation.point.model.dao.PointDao">
+
+    <insert id="insertHistory">
+        INSERT INTO point_history (member_id, type, amount, created_at)
+        VALUES (#{memberId}, #{type}, #{amount}, NOW())
+    </insert>
+
+    <insert id="insertDonation">
+        INSERT INTO donation (member_id, campaign_id, amount, donated_at)
+        VALUES (#{memberId}, #{campaignId}, #{amount}, NOW())
+    </insert>
+
+    <update id="updateCampaignAmount">
+        UPDATE campaign SET current_amount = current_amount + #{amount} WHERE campaign_id = #{campaignId}
+    </update>
+
+    <!-- 행 잠금으로 동시 기부 시에도 status/금액의 정합성을 보장 -->
+    <select id="findCampaignForDonation" resultType="com.doumi.donation.campaigns.model.dto.Campaign">
+        SELECT campaign_id, title, status, goal_amount, current_amount
+        FROM campaign
+        WHERE campaign_id = #{campaignId}
+        FOR UPDATE
+    </select>
+
+    <select id="findHistoryByMemberId" resultType="com.doumi.donation.point.model.dto.PointHistory">
+        SELECT history_id, member_id, type, amount, created_at
+        FROM point_history
+        WHERE member_id = #{memberId}
+        ORDER BY created_at DESC
+    </select>
+
+</mapper>
+
