@@ -125,6 +125,21 @@ public class PointServiceImp implements PointService {
     }
 
     @Override
+    @Transactional
+    public void revertRefund(long memberId, long amount) {
+        // 토스 결제취소가 실패해 refund()로 회수했던 포인트를 되돌린다.
+        // 외부 호출이 트랜잭션 밖에 있어 자동 롤백이 안 되므로 명시적으로 보상한다.
+        // (회수를 무효화하는 것이므로 이력은 충전과 동일한 CHARGE로 남긴다)
+        memberDao.updatePointBalanceById(memberId, amount);
+
+        PointHistory history = new PointHistory();
+        history.setMemberId(memberId);
+        history.setType("CHARGE");
+        history.setAmount(amount);
+        pointDao.insertHistory(history);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public List<PointHistory> getHistory(long memberId) {
         return pointDao.findHistoryByMemberId(memberId);

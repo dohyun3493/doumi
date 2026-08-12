@@ -4,34 +4,73 @@
 
 <mapper namespace="com.doumi.donation.payment.model.dao.PaymentDao">
 
-    <insert id="insertPayment">
+    <sql id="columns">
+        payment_id, member_id, payment_key, order_id, amount, status, created_at, canceled_at
+    </sql>
+
+    <!-- 토스 승인 전에 시도 사실을 먼저 커밋한다.
+         payment_key UNIQUE 제약이 여기서 중복 결제를 차단하므로,
+         불필요한 외부 호출도 함께 걸러진다. -->
+    <insert id="insertPending" useGeneratedKeys="true" keyProperty="paymentId">
         INSERT INTO payment (member_id, payment_key, order_id, amount, status)
-        VALUES (#{memberId}, #{paymentKey}, #{orderId}, #{amount}, 'CHARGED')
+        VALUES (#{memberId}, #{paymentKey}, #{orderId}, #{amount}, 'PENDING')
     </insert>
 
-    <!-- 멱등성 사전 체크: 이미 승인 처리된 결제인지 확인 -->
+    <!-- 멱등성 사전 체크: 이미 처리(시도)된 결제인지 확인 -->
     <select id="existsByPaymentKey" resultType="boolean">
         SELECT COUNT(*) > 0 FROM payment WHERE payment_key = #{paymentKey}
     </select>
 
     <select id="findByMemberId" resultType="com.doumi.donation.payment.model.dto.Payment">
-        SELECT payment_id, member_id, payment_key, order_id, amount, status, created_at, canceled_at
+        SELECT <include refid="columns"/>
         FROM payment
         WHERE member_id = #{memberId}
         ORDER BY created_at DESC
     </select>
 
     <select id="findById" resultType="com.doumi.donation.payment.model.dto.Payment">
-        SELECT payment_id, member_id, payment_key, order_id, amount, status, created_at, canceled_at
+        SELECT <include refid="columns"/>
         FROM payment
         WHERE payment_id = #{paymentId}
     </select>
 
-    <!-- CHARGED 건만 취소 처리 (이미 CANCELED면 0건 갱신 → 멱등) -->
-    <update id="cancelPayment">
-        UPDATE payment
-        SET status = 'CANCELED', canceled_at = NOW()
+    <!-- 아래 상태 전이는 모두 조건부 UPDATE다. 갱신 0건 = 이미 다른 주체가 처리함.
+         요청 처리와 복구 스케줄러가 동시에 실행돼도 한쪽만 성공한다(행 락으로 직렬화). -->
+
+    <update id="markCharged">
+        UPDATE payment SET status = 'CHARGED'
+        WHERE payment_id = #{paymentId} AND status = 'PENDING'
+    </update>
+
+    <update id="markFailed">
+        UPDATE payment SET status = 'FAILED'
+        WHERE payment_id = #{paymentId} AND status = 'PENDING'
+    </update>
+
+    <update id="markCanceling">
+        UPDATE payment SET status = 'CANCELING', canceled_at = NOW()
         WHERE payment_id = #{paymentId} AND status = 'CHARGED'
     </update>
+
+    <update id="markCanceled">
+        UPDATE payment SET status = 'CANCELED'
+        WHERE payment_id = #{paymentId} AND status = 'CANCELING'
+    </update>
+
+    <update id="restoreCharged">
+        UPDATE payment SET status = 'CHARGED', canceled_at = NULL
+        WHERE payment_id = #{paymentId} AND status = 'CANCELING'
+    </update>
+
+    <!-- 결과를 모른 채 일정 시간 방치된 건. 진행 중인 정상 요청까지 건드리지 않도록
+         updated_at 기준으로 유예 시간을 준다. -->
+    <select id="findStuck" resultType="com.doumi.donation.payment.model.dto.Payment">
+        SELECT <include refid="columns"/>
+        FROM payment
+        WHERE status IN ('PENDING', 'CANCELING')
+          AND updated_at &lt; DATE_SUB(NOW(), INTERVAL #{staleMinutes} MINUTE)
+        ORDER BY payment_id
+        LIMIT 100
+    </select>
 
 </mapper>

@@ -10,7 +10,9 @@ public class Payment {
     private String paymentKey;
     private String orderId;
     private long amount;
-    private String status;      // CHARGED | CANCELED
+    // PENDING(승인 시도, 결과 미확인) | CHARGED(승인+충전 완료) | CANCELING(취소 착수, 결과 미확인)
+    // | CANCELED(취소 완료) | FAILED(승인 거절)
+    private String status;
     private String createdAt;
     private String canceledAt;
 }

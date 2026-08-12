@@ -1,178 +1,110 @@
 package com.doumi.donation.payment.service;
 
 import com.doumi.donation.exception.DuplicateResourceException;
-import com.doumi.donation.exception.ResourceNotFoundException;
-import com.doumi.donation.exception.UnauthorizedException;
+import com.doumi.donation.exception.PaymentDeclinedException;
+import com.doumi.donation.payment.client.TossPaymentClient;
 import com.doumi.donation.payment.model.dao.PaymentDao;
 import com.doumi.donation.payment.model.dto.ConfirmRequest;
 import com.doumi.donation.payment.model.dto.Payment;
-import com.doumi.donation.point.model.dto.ChargeRequest;
-import com.doumi.donation.point.service.PointService;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.http.*;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestClientResponseException;
-import org.springframework.web.client.RestTemplate;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.List;
-import java.util.Map;
 
+/**
+ * 결제 흐름을 조율한다. <b>이 클래스에는 트랜잭션이 걸려 있지 않다.</b>
+ *
+ * <p>토스 승인/취소는 외부 HTTP 호출이라 DB 트랜잭션 안에서 부르면 두 가지 문제가 있다.
+ * 첫째, 응답을 기다리는 동안 DB 커넥션이 반납되지 않아 커넥션 풀이 고갈되고 결제와 무관한
+ * API까지 함께 죽는다. 둘째, HTTP 호출은 롤백되지 않으므로 트랜잭션에 묶어봐야 원자성이
+ * 보장되지 않는다 — 오히려 보장되는 것처럼 착각하게 만든다.
+ *
+ * <p>그래서 외부 호출은 여기(트랜잭션 밖)에서 하고, DB 작업은 {@link PaymentTxService}의
+ * 짧은 트랜잭션에 맡긴다. 외부 상태는 롤백할 수 없으므로 되돌리는 대신 <b>앞으로 민다</b>:
+ * 호출 전에 PENDING을 커밋해 흔적을 남기고, 결과를 모른 채 중단되면 그 흔적을 근거로
+ * 스케줄러가 토스에 재조회해 확정한다.
+ */
 @Service
 public class PaymentServiceImp implements PaymentService {
 
-    private final PointService pointService;
+    private final PaymentTxService paymentTxService;
+    private final TossPaymentClient tossPaymentClient;
     private final PaymentDao paymentDao;
-    private final RestTemplate restTemplate = createRestTemplate();
 
-    private static RestTemplate createRestTemplate() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(3000);
-        factory.setReadTimeout(10000);
-        return new RestTemplate(factory);
-    }
-
-    @Value("${toss.secret-key}")
-    private String secretKey;
-
-    @Value("${toss.confirm-url}")
-    private String confirmUrl;
-
-    // 결제 취소 베이스 URL (실제 호출: {cancelUrl}/{paymentKey}/cancel)
-    @Value("${toss.cancel-url}")
-    private String cancelUrl;
-
-    public PaymentServiceImp(PointService pointService, PaymentDao paymentDao) {
-        this.pointService = pointService;
+    public PaymentServiceImp(PaymentTxService paymentTxService,
+                             TossPaymentClient tossPaymentClient,
+                             PaymentDao paymentDao) {
+        this.paymentTxService = paymentTxService;
+        this.tossPaymentClient = tossPaymentClient;
         this.paymentDao = paymentDao;
     }
 
-    // 원장 기록(insertPayment)과 포인트 충전(charge)을 하나의 트랜잭션으로 묶어
-    // 둘 중 하나라도 실패하면 함께 롤백 → "결제는 됐는데 포인트 미지급" 같은 불일치 방지.
+    /**
+     * 결제 승인 + 포인트 충전.
+     *
+     * <p>중간에 죽으면 결제 건은 PENDING으로 남고, 스케줄러가 토스 조회로 확정한다.
+     * 그래서 사용자에게 "실패"가 아니라 "처리 중"으로 안내해야 한다
+     * ({@code PaymentPendingException} → 202).
+     */
     @Override
-    @Transactional
     public void confirm(long memberId, ConfirmRequest req) {
-        // 0. 멱등성 사전 체크: 이미 승인 처리된 결제면 토스 재호출 없이 즉시 409
-        //    (사용자 더블클릭 등으로 같은 paymentKey가 재요청되는 흔한 경우를 깔끔하게 차단)
+        // 0. 멱등성 사전 체크: 이미 시도된 결제면 토스 재호출 없이 즉시 409
+        //    (더블클릭 등 흔한 경우를 싸게 차단. 동시 요청 경합은 1번의 UNIQUE 제약이 막는다)
         if (paymentDao.existsByPaymentKey(req.getPaymentKey())) {
             throw new DuplicateResourceException("이미 처리된 결제입니다.");
         }
 
-        // 1. 토스페이먼츠 결제 승인
-        approvePayment(req);
+        // 1. 승인 시도 사실을 먼저 커밋 (짧은 DB 트랜잭션)
+        long paymentId = paymentTxService.createPending(memberId, req);
 
-        // 2. 결제 원장 기록 (paymentKey가 있어야 이후 환불(결제취소) 가능)
+        // 2. 토스페이먼츠 결제 승인 — 트랜잭션 밖에서 호출
         try {
-            Payment payment = new Payment();
-            payment.setMemberId(memberId);
-            payment.setPaymentKey(req.getPaymentKey());
-            payment.setOrderId(req.getOrderId());
-            payment.setAmount(req.getAmount());
-            paymentDao.insertPayment(payment);
-        } catch (DataIntegrityViolationException e) {
-            // 동시에 같은 결제가 들어온 경합(UNIQUE payment_key 위반) → 500이 아닌 409로 변환
-            throw new DuplicateResourceException("이미 처리된 결제입니다.");
+            tossPaymentClient.approve(req);
+        } catch (PaymentDeclinedException e) {
+            // 토스가 명시적으로 거절 → 결과가 확정됐으므로 즉시 종결
+            paymentTxService.markFailed(paymentId);
+            throw e;
         }
+        // 결과 불명(PaymentPendingException)은 여기서 잡지 않는다.
+        // PENDING으로 남겨둬야 스케줄러가 재조회해 복구할 수 있다.
 
-        // 3. 승인 성공 → 포인트 충전 (같은 트랜잭션에 합류해 원장과 원자적으로 처리됨)
-        ChargeRequest chargeRequest = new ChargeRequest();
-        chargeRequest.setAmount(req.getAmount());
-        pointService.charge(memberId, chargeRequest);
+        // ★ 이 지점에서 프로세스가 죽어도 PENDING이 남아 스케줄러가 복구한다
+
+        // 3. 승인 확정 + 포인트 충전 (짧은 DB 트랜잭션)
+        paymentTxService.completeCharge(paymentId, memberId, req.getAmount());
     }
 
-    // 충전 취소(환불): 포인트 회수 → 토스 결제취소 → 원장 갱신을 하나의 트랜잭션으로 묶음.
-    // 포인트 회수를 먼저 시도해(잔액 부족이면 즉시 중단) 환불 전에 정합성을 확인하고,
-    // 토스 취소가 실패하면 트랜잭션이 롤백되어 회수했던 포인트도 원복된다.
+    /**
+     * 충전 취소(환불).
+     *
+     * <p>취소 착수(상태 전이 + 포인트 회수) → 토스 취소 → 확정 순서로 처리한다.
+     * 포인트 회수를 토스 호출보다 먼저 두어, 이미 써버려 잔액이 부족하면 되돌릴 수 없는
+     * 환불을 실행하기 전에 중단한다.
+     */
     @Override
-    @Transactional
     public void cancel(long memberId, long paymentId, String reason) {
-        Payment payment = paymentDao.findById(paymentId);
-        if (payment == null) {
-            throw new ResourceNotFoundException("존재하지 않는 결제 내역입니다.");
-        }
-        if (payment.getMemberId() != memberId) {
-            throw new UnauthorizedException("본인의 결제만 취소할 수 있습니다.");
-        }
-        if ("CANCELED".equals(payment.getStatus())) {
-            throw new DuplicateResourceException("이미 취소된 결제입니다.");
-        }
+        // 1. 취소 착수 (DB 트랜잭션): 검증 → CHARGED→CANCELING → 포인트 회수
+        Payment payment = paymentTxService.beginCancel(memberId, paymentId);
 
-        // 1. 충전했던 포인트 회수 (이미 써버려 잔액 부족이면 여기서 예외 → 환불 진행 안 함)
-        pointService.refund(memberId, payment.getAmount());
+        // 2. 토스 결제 취소 — 트랜잭션 밖에서 호출
+        try {
+            tossPaymentClient.cancel(payment.getPaymentKey(), reason);
+        } catch (PaymentDeclinedException e) {
+            // 확정 실패 → 1번 트랜잭션은 이미 커밋되어 자동 롤백되지 않으므로 보상으로 원복
+            paymentTxService.revertCancel(memberId, paymentId, payment.getAmount());
+            throw e;
+        }
+        // 결과 불명은 CANCELING으로 남겨 스케줄러가 확정하도록 둔다
 
-        // 2. 토스 결제 취소 (실패 시 예외 → 1번 포인트 회수까지 함께 롤백)
-        cancelPayment(payment.getPaymentKey(), reason);
+        // ★ 이 지점에서 죽어도 CANCELING이 남아 스케줄러가 복구한다
 
-        // 3. 원장 상태 갱신 (CHARGED → CANCELED)
-        paymentDao.cancelPayment(paymentId);
+        // 3. 취소 확정 (CANCELING → CANCELED)
+        paymentTxService.completeCancel(paymentId);
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<Payment> findByMemberId(long memberId) {
         return paymentDao.findByMemberId(memberId);
-    }
-
-    // 토스 결제 취소 API 호출: POST {cancelUrl}/{paymentKey}/cancel  body: { cancelReason }
-    private void cancelPayment(String paymentKey, String reason) {
-        String encodedAuth = Base64.getEncoder()
-                .encodeToString((secretKey + ":").getBytes(StandardCharsets.UTF_8));
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("Authorization", "Basic " + encodedAuth);
-
-        Map<String, Object> body = Map.of(
-                "cancelReason", (reason == null || reason.isBlank()) ? "사용자 요청" : reason
-        );
-
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-        String url = cancelUrl + "/" + paymentKey + "/cancel";
-
-        try {
-            ResponseEntity<Map> response =
-                    restTemplate.postForEntity(url, entity, Map.class);
-
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new IllegalArgumentException("결제 취소에 실패했습니다.");
-            }
-        } catch (RestClientResponseException e) {
-            // 토스가 내려준 에러 본문 전달
-            throw new IllegalArgumentException("결제 취소 실패: " + e.getResponseBodyAsString());
-        }
-    }
-
-    // 토스 결제 승인 API 호출 (시크릿 키 뒤에 ':' 붙여 Base64 → Basic 인증)
-    private void approvePayment(ConfirmRequest req) {
-        String encodedAuth = Base64.getEncoder()
-                .encodeToString((secretKey + ":").getBytes(StandardCharsets.UTF_8));
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("Authorization", "Basic " + encodedAuth);
-
-        Map<String, Object> body = Map.of(
-                "paymentKey", req.getPaymentKey(),
-                "orderId", req.getOrderId(),
-                "amount", req.getAmount()
-        );
-
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-
-        try {
-            ResponseEntity<Map> response =
-                    restTemplate.postForEntity(confirmUrl, entity, Map.class);
-
-            if (!response.getStatusCode().is2xxSuccessful()) {
-                throw new IllegalArgumentException("결제 승인에 실패했습니다.");
-            }
-        } catch (RestClientResponseException e) {
-            // 토스가 내려준 에러 본문 전달
-            throw new IllegalArgumentException("결제 승인 실패: " + e.getResponseBodyAsString());
-        }
     }
 }

@@ -13,5 +13,7 @@ public interface PointService {
     void refund(long memberId, long amount);
     /** 단체 탈퇴 등으로 기부가 무효화될 때 기부자에게 포인트를 되돌려준다 (잔액 +금액 + REFUND 이력) */
     void refundToMember(long memberId, long amount);
+    /** 결제 취소가 외부에서 실패해 {@link #refund}로 회수했던 포인트를 되돌릴 때 사용 (보상 트랜잭션) */
+    void revertRefund(long memberId, long amount);
     List<PointHistory> getHistory(long memberId);
 }

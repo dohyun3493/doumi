@@ -28,6 +28,20 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
+    // 토스 호출 결과를 알 수 없음 (타임아웃 등). 실패로 단정하면 실제로는 승인된 결제를
+    // 사용자가 다시 시도하게 되므로, 실패(4xx/5xx)가 아니라 "처리 중"(202)으로 안내한다.
+    // 결제 건은 PENDING/CANCELING으로 남아 대사 스케줄러가 확정한다.
+    @ExceptionHandler(PaymentPendingException.class)
+    public ResponseEntity<ErrorResponse> handlePaymentPendingException(PaymentPendingException ex) {
+        log.warn("결제 결과 미확정 — 대사 스케줄러가 확정합니다: {}", ex.getMessage());
+        ErrorResponse response = ErrorResponse.builder()
+                .status(HttpStatus.ACCEPTED.value())
+                .error(HttpStatus.ACCEPTED.getReasonPhrase())
+                .message("결제 처리 중입니다. 잠시 후 결제 내역에서 확인해 주세요.")
+                .build();
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
+    }
+
     // 중복 자원 (이미 사용 중인 이메일 등)
     @ExceptionHandler(DuplicateResourceException.class)
     public ResponseEntity<ErrorResponse> handleDuplicateResourceException(DuplicateResourceException ex) {

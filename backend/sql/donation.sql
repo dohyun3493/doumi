@@ -94,8 +94,13 @@ CREATE TABLE PAYMENT (
     payment_key VARCHAR(200) NOT NULL UNIQUE COMMENT '토스 paymentKey (취소 시 필요)',
     order_id    VARCHAR(100) NOT NULL,
     amount      BIGINT       NOT NULL,
-    status      ENUM('CHARGED', 'CANCELED') NOT NULL DEFAULT 'CHARGED',
+    -- PENDING/CANCELING = 토스 호출 결과를 아직 모르는 상태.
+    -- 이 '모름' 상태가 있어야 장애로 중단된 건을 스케줄러가 재조회해 복구할 수 있다.
+    status      ENUM('PENDING', 'CHARGED', 'CANCELING', 'CANCELED', 'FAILED')
+                             NOT NULL DEFAULT 'PENDING',
     created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- 방치된 건을 찾는 기준 (마지막 상태 변경 시각)
+    updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     canceled_at DATETIME     NULL,
     PRIMARY KEY (payment_id),
     CONSTRAINT fk_payment_member FOREIGN KEY (member_id) REFERENCES MEMBER (member_id)
