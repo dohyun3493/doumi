@@ -151,6 +151,15 @@ async function fetchHistory() {
 // ===== 충전(결제) 내역 + 환불 =====
 const payments = ref([])
 
+// 결제 상태 뱃지. CHARGED는 정상 완료라 뱃지를 달지 않는다.
+// PENDING/CANCELING은 토스 결과를 아직 모르는 상태로, 서버 대사 스케줄러가 확정한다.
+const PAYMENT_STATUS_LABEL = {
+  PENDING: '처리 중',
+  CANCELING: '환불 처리 중',
+  CANCELED: '취소됨',
+  FAILED: '실패',
+}
+
 async function fetchPayments() {
   if (!authStore.currentUser?.email) return
   try {
@@ -164,8 +173,12 @@ async function fetchPayments() {
 async function cancelPayment(paymentId) {
   if (!confirm('이 충전을 취소(환불)하시겠습니까?\n충전했던 포인트가 회수되며, 이미 사용한 경우 환불이 불가합니다.')) return
   try {
-    await api.post(`/payments/${paymentId}/cancel`, { reason: '사용자 요청 환불' })
-    alert('결제가 취소(환불)되었습니다.')
+    const res = await api.post(`/payments/${paymentId}/cancel`, { reason: '사용자 요청 환불' })
+    // 202 = 서버가 토스 취소 결과를 확인하지 못한 상태. 실패로 안내하면 안 되고,
+    // 대사 스케줄러가 토스에 재조회해 확정한다.
+    alert(res.status === 202
+      ? '환불 처리 중입니다. 잠시 후 충전 내역에서 확인해 주세요.'
+      : '결제가 취소(환불)되었습니다.')
     // 잔액·내역 새로고침
     await Promise.all([fetchMemberInfo(), fetchHistory(), fetchPayments()])
   } catch (e) {
@@ -445,8 +458,8 @@ async function withdrawMember() {
                 <div>
                   <div class="font-semibold mb-1 flex items-center gap-2" style="color: var(--text-primary)">
                     포인트 충전
-                    <span v-if="p.status === 'CANCELED'" class="text-xs px-2 py-0.5 rounded-full"
-                      style="background-color: #f3f4f6; color: var(--text-muted)">취소됨</span>
+                    <span v-if="PAYMENT_STATUS_LABEL[p.status]" class="text-xs px-2 py-0.5 rounded-full"
+                      style="background-color: #f3f4f6; color: var(--text-muted)">{{ PAYMENT_STATUS_LABEL[p.status] }}</span>
                   </div>
                   <div class="text-sm" style="color: var(--text-muted)">{{ p.createdAt?.slice(0, 10) }}</div>
                 </div>
