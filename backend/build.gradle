@@ -48,6 +48,9 @@ dependencies {
 	// Spring AI (AI 챗봇 + Redis Vector Store RAG)
 	implementation 'org.springframework.ai:spring-ai-starter-model-openai'
 	implementation 'org.springframework.ai:spring-ai-starter-vector-store-redis'
+
+	// Redis 캐시 (통계 대시보드 응답 캐싱)
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 }
 
 dependencyManagement {

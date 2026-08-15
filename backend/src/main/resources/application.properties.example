@@ -49,6 +49,10 @@ kakao.rest-api-key=YOUR_KAKAO_REST_API_KEY
 chatbot.redis.host=localhost
 chatbot.redis.port=6379
 
+# Redis 캐시 (통계 대시보드 응답 캐싱) — 벡터 스토어와 동일 인스턴스 사용
+spring.data.redis.host=localhost
+spring.data.redis.port=6379
+
 # 메일 발송 (Gmail SMTP) — 회원가입 이메일 인증 / 비밀번호 재설정 코드 발송용
 # Gmail 2단계 인증을 켠 뒤 '앱 비밀번호' 16자리를 발급받아 MAIL_PASSWORD 로 주입한다.
 # 환경변수: MAIL_USERNAME=보내는_지메일주소, MAIL_PASSWORD=앱_비밀번호(공백 제거)

@@ -1,7 +1,9 @@
 package com.doumi.donation.stats.service;
 
+import com.doumi.donation.config.CacheConfig;
 import com.doumi.donation.stats.model.dao.StatsDao;
 import com.doumi.donation.stats.model.dto.StatsResponse;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,7 +16,10 @@ public class StatsServiceImp implements StatsService {
         this.statsDao = statsDao;
     }
 
+    // 통계 대시보드는 요청마다 집계 쿼리 11개를 수행하므로 Redis에 캐싱
+    // (TTL 5분, 기부 발생 시 PointServiceImp에서 즉시 무효화)
     @Override
+    @Cacheable(cacheNames = CacheConfig.STATS_CACHE, key = "'summary'")
     @Transactional(readOnly = true)
     public StatsResponse getStats() {
         StatsResponse res = new StatsResponse();

@@ -9,8 +9,10 @@ import com.doumi.donation.point.model.dao.PointDao;
 import com.doumi.donation.point.model.dto.ChargeRequest;
 import com.doumi.donation.point.model.dto.PointHistory;
 import com.doumi.donation.point.model.dto.UseRequest;
+import com.doumi.donation.config.CacheConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,7 +50,9 @@ public class PointServiceImp implements PointService {
         memberDao.updatePointBalanceById(memberId, req.getAmount());
     }
 
+    // 기부가 발생하면 총 기부금 등 통계가 바뀌므로 통계 캐시를 즉시 무효화
     @Override
+    @CacheEvict(cacheNames = CacheConfig.STATS_CACHE, allEntries = true)
     @Transactional
     public void use(long memberId, UseRequest req) {
         Member member = memberDao.findByMemberId(memberId);
